@@ -6,6 +6,7 @@ export interface HarnessAdapter {
   id: string;
   executable: string;
   environment(root: string): NodeJS.ProcessEnv;
+  arguments?(root: string, userArguments: string[]): string[];
 }
 
 const adapters: Record<string, HarnessAdapter> = {
@@ -15,6 +16,12 @@ const adapters: Record<string, HarnessAdapter> = {
     environment: (root) => ({
       PI_CODING_AGENT_DIR: join(root, "harnesses", "pi", "agent"),
     }),
+    arguments: (root, userArguments) => [
+      "--no-skills",
+      "--skill",
+      join(root, "skills"),
+      ...userArguments,
+    ],
   },
   dsh: {
     id: "dsh",
@@ -53,11 +60,13 @@ export async function runHarness(
   args: string[],
 ): Promise<number> {
   await store.read(environmentName);
+  await store.ensureSkillsDirectory(environmentName);
   const adapter = getHarness(harnessId);
   const root = store.environmentPath(environmentName);
+  const harnessArguments = adapter.arguments?.(root, args) ?? args;
 
   return await new Promise<number>((resolve, reject) => {
-    const child = spawn(adapter.executable, args, {
+    const child = spawn(adapter.executable, harnessArguments, {
       cwd: process.cwd(),
       env: { ...process.env, ...adapter.environment(root) },
       stdio: "inherit",

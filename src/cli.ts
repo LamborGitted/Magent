@@ -3,9 +3,11 @@ import { Command } from "commander";
 import { EnvironmentStore } from "./core/environment-store.js";
 import { runHarness } from "./core/harnesses.js";
 import { getMagentPaths } from "./core/paths.js";
+import { SkillStore } from "./core/skill-store.js";
 
 const program = new Command();
 const store = new EnvironmentStore();
+const skillStore = new SkillStore(store);
 
 program
   .name("magent")
@@ -81,6 +83,43 @@ environment
   });
 
 program
+  .command("listskills [environment]")
+  .description("List shared Skills or Skills linked to an environment")
+  .option("--json", "print JSON")
+  .action(listSkillsAction);
+
+program
+  .command("addskills <environment> <skills...>")
+  .description("Link shared Skills into an environment")
+  .action(addSkillsAction);
+
+program
+  .command("rmskills <environment> <skills...>")
+  .alias("removeskills")
+  .description("Unlink Skills from an environment without deleting their shared sources")
+  .action(removeSkillsAction);
+
+const skillsCommand = program.command("skills").description("Manage shared Skills bindings");
+
+skillsCommand
+  .command("list [environment]")
+  .alias("ls")
+  .description("List shared Skills or Skills linked to an environment")
+  .option("--json", "print JSON")
+  .action(listSkillsAction);
+
+skillsCommand
+  .command("add <environment> <skills...>")
+  .description("Link shared Skills into an environment")
+  .action(addSkillsAction);
+
+skillsCommand
+  .command("remove <environment> <skills...>")
+  .alias("rm")
+  .description("Unlink Skills without deleting their shared sources")
+  .action(removeSkillsAction);
+
+program
   .command("run")
   .description("Run a harness inside an environment")
   .argument("<environment>", "environment name")
@@ -102,3 +141,45 @@ program.parseAsync().catch((error: unknown) => {
   console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
+
+async function listSkillsAction(
+  environmentName: string | undefined,
+  options: { json?: boolean },
+): Promise<void> {
+  if (environmentName) {
+    const skills = await skillStore.listEnvironment(environmentName);
+    if (options.json) {
+      console.log(JSON.stringify(skills, null, 2));
+    } else if (skills.length === 0) {
+      console.log(`No Skills found in ${store.skillsPath(environmentName)}.`);
+    } else {
+      console.log("SKILL\tSTATUS\tTARGET");
+      for (const skill of skills) {
+        console.log(`${skill.id}\t${skill.status}\t${skill.target}`);
+      }
+    }
+    return;
+  }
+
+  const skills = await skillStore.listShared();
+  if (options.json) {
+    console.log(JSON.stringify(skills, null, 2));
+  } else if (skills.length === 0) {
+    console.log(`No Skills found in ${skillStore.sharedSkillsPath()}.`);
+  } else {
+    console.log("SKILL\tDESCRIPTION");
+    for (const skill of skills) console.log(`${skill.id}\t${skill.description ?? ""}`);
+  }
+}
+
+async function addSkillsAction(environmentName: string, skillIds: string[]): Promise<void> {
+  const links = await skillStore.add(environmentName, skillIds);
+  for (const link of links) console.log(`Linked ${link.id} -> ${link.target}`);
+}
+
+async function removeSkillsAction(environmentName: string, skillIds: string[]): Promise<void> {
+  const removed = await skillStore.remove(environmentName, skillIds);
+  for (const skill of removed) {
+    console.log(`${skill.linkRemoved ? "Unlinked" : "Unlocked"} ${skill.id}`);
+  }
+}

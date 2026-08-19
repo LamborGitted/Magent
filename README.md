@@ -44,11 +44,20 @@ magent env list
 magent env info <name>
 magent env remove <name> --yes
 
+magent skills list [environment]
+magent skills add <environment> <skills...>
+magent skills rm <environment> <skills...>
+
+# 兼容的快捷命令
+magent listskills [environment]
+magent addskills <environment> <skills...>
+magent rmskills <environment> <skills...>
+
 magent run <environment> <harness> [args...]
 magent home
 ```
 
-`env list` 和 `env info` 支持 `--json`。
+`env list`、`env info` 和 `listskills` 支持 `--json`。
 
 ### Harness Adapter
 
@@ -107,6 +116,21 @@ magent env list
 magent env info mini
 ```
 
+列出 `~/.agents/skills` 中可用的共享 Skills，并软连接到环境：
+
+```bash
+magent skills list
+magent skills add mini find-skills
+magent skills list mini
+magent skills rm mini find-skills
+```
+
+`~/.agents/skills` 是 Agent Skills 标准使用的复数目录。需要使用其他来源时，可以设置：
+
+```bash
+MAGENT_SHARED_SKILLS=~/.agent/skills magent listskills
+```
+
 运行 Harness：
 
 ```bash
@@ -163,13 +187,18 @@ magent home
 └── envs/
     └── mini/
         ├── env.toml
+        ├── .skill-lock.json
         ├── harnesses/
         │   ├── pi/
         │   │   └── agent/
+        │   │       └── skills -> ../../../skills
         │   ├── dsh/
         │   │   └── home/
         │   └── codex/
         │       └── home/
+        │           └── skills -> ../../../skills
+        ├── skills/
+        │   └── find-skills -> ~/.agents/skills/find-skills
         ├── packages/
         └── state/
 ```
@@ -200,7 +229,11 @@ magent run mini pi
     ↓
 获取 Pi Harness Adapter
     ↓
+确保 <mini>/skills 共享层存在
+    ↓
 设置 PI_CODING_AGENT_DIR=<mini>/harnesses/pi/agent
+    ↓
+注入 --no-skills --skill <mini>/skills
     ↓
 使用当前工作目录启动 pi
     ↓
@@ -212,7 +245,12 @@ magent run mini pi
 核心调用接近：
 
 ```ts
-spawn("pi", args, {
+spawn("pi", [
+  "--no-skills",
+  "--skill",
+  "<mini>/skills",
+  ...args,
+], {
   cwd: process.cwd(),
   env: {
     ...process.env,
@@ -232,41 +270,70 @@ Magent 不经过 Shell 拼接命令，参数会作为数组直接传递给子进
 - Pi 的 `PI_CODING_AGENT_DIR` 独立
 - DSH 的 `DSH_HOME` 独立
 - Codex 的 `CODEX_HOME` 独立
+- 可发现 `~/.agents/skills` 中包含 `SKILL.md` 的共享 Skills
+- `addskills` 使用软连接绑定 Skill，不复制文件
+- Pi 默认关闭自动 Skill 发现，只显式加载当前环境的 `<env>/skills`
+- Pi 与 Codex 的 Harness Skills 路径都连接到同一个环境 Skills 层
 - Harness 的交互式终端可正常使用
 - 当前项目工作目录保持不变
 - Harness 的退出码会传递给调用方
 
-### 尚未完全隔离
+### 共享 Skills 层
 
-#### Pi 全局 Agent Skills
-
-Pi 除了扫描：
-
-```text
-$PI_CODING_AGENT_DIR/skills
-```
-
-还会独立扫描：
+默认共享来源是：
 
 ```text
 ~/.agents/skills
 ```
 
-后者不受 `PI_CODING_AGENT_DIR` 控制。因此，如果宿主机存在：
-
-```text
-~/.agents/skills/find-skills/SKILL.md
-```
-
-新创建的 Magent 环境仍可能发现 `find-skills`。
-
-临时严格关闭 Skills 自动发现：
+执行：
 
 ```bash
-magent run mini pi --no-skills
+magent skills add mini find-skills
 ```
 
-Pi 支持通过重复的 `--skill <path>` 显式加载指定 Skill，但 Magent 尚未自动注入环境级 Skill 路径。
+会创建或更新 `.skill-lock.json`，并建立软连接：
+
+```text
+<mini>/skills/find-skills -> ~/.agents/skills/find-skills
+```
+
+Lock 文件记录来源、完整 Skill 目录的 SHA-256 完整性摘要和首次绑定时间：
+
+```json
+{
+  "schemaVersion": 1,
+  "skills": {
+    "find-skills": {
+      "source": "/home/user/.agents/skills/find-skills",
+      "integrity": "sha256-...",
+      "linkedAt": "2026-08-19T02:45:00.123Z"
+    }
+  }
+}
+```
+
+解除绑定：
+
+```bash
+magent skills rm mini find-skills
+# rmskills 和 removeskills 是等价快捷命令
+```
+
+该操作只删除环境软连接和 Lock 记录，不会删除 `~/.agents/skills` 中的共享源。
+`listskills <env>` 会显示 `linked`、`unlocked` 或 `missing` 状态，用于识别手动修改造成的不一致。
+
+Pi 每次启动时默认获得：
+
+```bash
+pi --no-skills --skill <mini>/skills ...
+```
+
+因此不会再自动加载未绑定到当前环境的 `~/.agents/skills`。Codex 的
+`CODEX_HOME/skills` 会软连接到同一个 `<mini>/skills`；其他 Harness 需要在各自 Adapter
+确认官方 Skills 接口后再接入该层。
+
+### 尚未完全隔离
 
 #### Pi 项目 Context Files
 
@@ -321,7 +388,6 @@ Magent 不会隔离：
 ```bash
 magent run mini pi \
   --no-context-files \
-  --no-skills \
   --no-extensions \
   --no-prompt-templates \
   --no-themes
@@ -346,18 +412,23 @@ src/
     ├── environment-store.ts     # 环境创建、读取、列出、删除
     ├── harnesses.ts             # Harness Adapter 和进程启动
     ├── manifest.ts              # Manifest 类型、创建与校验
-    └── paths.ts                 # XDG/MAGENT_HOME 路径解析
+    ├── paths.ts                 # XDG/MAGENT_HOME/共享 Skills 路径解析
+    ├── skill-lock.ts            # Lock 读写与完整性摘要
+    └── skill-store.ts           # 共享 Skill 发现、绑定和移除
 
 test/
-└── environment-store.test.ts
+├── environment-store.test.ts
+├── harnesses.test.ts
+└── skill-store.test.ts
 ```
 
 ## 已知限制
 
 - 没有 `magent doctor` 和 Harness 自动探测
 - 没有 Harness 版本约束与兼容性检查
-- 没有严格隔离模式
-- 没有环境级 Skills 安装和绑定
+- 没有完整严格隔离模式（Pi Skills 已隔离，Context Files 等仍需手动关闭）
+- Skills 当前只支持从共享目录软连接，不支持下载、版本解析或自动更新
+- DSH 等其他 Harness 尚未接入共享 Skills 层
 - 没有环境克隆、导入和导出
 - 没有 Runtime ID、PID、日志与进程状态记录
 - 没有后台 Daemon、Surface 或 Service 管理
@@ -371,9 +442,9 @@ test/
 建议按以下顺序继续：
 
 1. 增加 `magent doctor` 和 Harness 探测
-2. 为 Adapter 增加启动参数注入能力
-3. 实现 `--isolation project-aware|strict`
-4. 实现环境级 Skills 目录和显式加载
+2. 实现 `--isolation project-aware|strict`
+3. 增加 Skill Lock 校验/修复命令
+4. 为更多 Harness 接入共享 Skills 层
 5. 增加 `magent env clone/export/import`
 6. 增加 Runtime 记录、日志和停止能力
 7. 再评估 Daemon、pi-web 等 Surface 管理
@@ -387,6 +458,11 @@ test/
 - 环境列表排序
 - 非法名称与重复名称拒绝
 - 删除环境
+- 共享 Skills 发现和描述读取
+- Skill 软连接、重复绑定和解除绑定
+- `.skill-lock.json` 原子写入与完整性摘要
+- Pi 默认 `--no-skills --skill <env>/skills` 参数注入
+- Pi 与 Codex 共用同一个环境 Skills 层
 
 运行：
 
