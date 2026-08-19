@@ -6,6 +6,8 @@ import { inspectHarnesses, runHarness } from "./core/harnesses.js";
 import { getMagentPaths } from "./core/paths.js";
 import { SkillStore } from "./core/skill-store.js";
 
+declare const __MAGENT_VERSION__: string;
+
 const program = new Command();
 const store = new EnvironmentStore();
 const skillStore = new SkillStore(store);
@@ -13,7 +15,7 @@ const skillStore = new SkillStore(store);
 program
   .name("magent")
   .description("Manage isolated environments for AI agent harnesses")
-  .version("0.1.0")
+  .version(__MAGENT_VERSION__)
   .showHelpAfterError();
 
 const environment = program

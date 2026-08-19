@@ -42,7 +42,7 @@ Magent 当前不负责：
 magent env create <name>
 magent env list
 magent env info <name>
-magent env remove <name> --yes
+magent env remove <name> [-y|--yes]
 
 magent skills list [environment]
 magent skills add <environment> <skills...>
@@ -72,10 +72,28 @@ magent home
 
 OpenCode 当前明确不在支持范围内。Magent 不包含这些 Harness。对应命令必须已经安装并能够从 `PATH` 找到。
 
-## 安装与开发
+## 安装
+
+需要 Node.js 22 或更高版本：
 
 ```bash
-cd ./repo/Magent
+npm install --global @lantxx/magent
+# 或
+pnpm add --global @lantxx/magent
+```
+
+验证安装：
+
+```bash
+magent --version
+magent --help
+```
+
+## 开发
+
+```bash
+git clone https://github.com/LamborGitted/Magent.git
+cd Magent
 corepack pnpm install
 ```
 
@@ -90,9 +108,7 @@ corepack pnpm dev -- run mini dsh web
 构建和检查：
 
 ```bash
-corepack pnpm typecheck
-corepack pnpm test
-corepack pnpm build
+corepack pnpm check
 node dist/cli.js --help
 ```
 

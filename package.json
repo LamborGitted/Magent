@@ -1,7 +1,26 @@
 {
-  "name": "magent",
+  "name": "@lantxx/magent",
   "version": "0.1.0",
   "description": "Isolated environment manager for AI agent harnesses",
+  "license": "MIT",
+  "author": "LamborGitted",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LamborGitted/Magent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LamborGitted/Magent/issues"
+  },
+  "homepage": "https://github.com/LamborGitted/Magent#readme",
+  "keywords": [
+    "ai-agent",
+    "agent-harness",
+    "environment-manager",
+    "pi",
+    "codex",
+    "claude-code",
+    "gemini-cli"
+  ],
   "type": "module",
   "bin": {
     "magent": "dist/cli.js"
@@ -14,7 +33,12 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=22"
