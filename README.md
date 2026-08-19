@@ -53,6 +53,7 @@ magent listskills [environment]
 magent addskills <environment> <skills...>
 magent rmskills <environment> <skills...>
 
+magent doctor [harness]
 magent run <environment> <harness> [args...]
 magent home
 ```
@@ -66,8 +67,10 @@ magent home
 | Pi | `pi` | `PI_CODING_AGENT_DIR` | `<env>/harnesses/pi/agent` |
 | DSH | `dsh` | `DSH_HOME` | `<env>/harnesses/dsh/home` |
 | Codex | `codex` | `CODEX_HOME` | `<env>/harnesses/codex/home` |
+| Claude Code | `claude` | `CLAUDE_CONFIG_DIR` | `<env>/harnesses/claude/config` |
+| Gemini CLI | `gemini` | `GEMINI_CLI_HOME` | `<env>/harnesses/gemini/home` |
 
-Magent 不包含这些 Harness。对应命令必须已经安装并能够从 `PATH` 找到。
+OpenCode 当前明确不在支持范围内。Magent 不包含这些 Harness。对应命令必须已经安装并能够从 `PATH` 找到。
 
 ## 安装与开发
 
@@ -131,12 +134,22 @@ magent skills rm mini find-skills
 MAGENT_SHARED_SKILLS=~/.agent/skills magent listskills
 ```
 
+检查 Harness 是否安装并读取版本：
+
+```bash
+magent doctor
+magent doctor claude
+magent doctor gemini --json
+```
+
 运行 Harness：
 
 ```bash
 magent run mini pi
 magent run mini dsh web
 magent run mini codex --help
+magent run mini claude
+magent run mini gemini
 ```
 
 Harness 参数会原样传递。例如：
@@ -152,13 +165,19 @@ DSH_HOME="$HOME/.local/share/magent/envs/mini/harnesses/dsh/home" \
   dsh web --port 3000
 ```
 
-删除环境：
+删除环境时会在交互式终端中请求确认：
 
 ```bash
-magent env remove mini --yes
+magent env remove mini
 ```
 
-删除操作目前会直接递归删除整个环境目录。Magent 尚未实现运行实例检查、停止确认和回收站。
+使用 `-y` 或 `--yes` 可以跳过确认并直接删除，适合脚本调用：
+
+```bash
+magent env remove mini -y
+```
+
+非交互环境未提供 `--yes` 时会拒绝执行。删除操作目前会直接递归删除整个环境目录；Magent 尚未实现运行实例检查和回收站。
 
 ## 数据目录
 
@@ -180,23 +199,31 @@ MAGENT_HOME=/tmp/magent-test magent env list
 magent home
 ```
 
-创建 `mini` 后的目录结构：
+创建环境时只生成通用目录；首次运行相应 Harness 时，Adapter 会懒创建自己的状态目录。全部已准备后的结构：
 
 ```text
 ~/.local/share/magent/
 └── envs/
     └── mini/
         ├── env.toml
-        ├── .skill-lock.json
+        ├── env-lock.json
         ├── harnesses/
         │   ├── pi/
         │   │   └── agent/
         │   │       └── skills -> ../../../skills
         │   ├── dsh/
         │   │   └── home/
-        │   └── codex/
+        │   ├── codex/
+        │   │   └── home/
+        │   │       └── skills -> ../../../skills
+        │   ├── claude/
+        │   │   └── config/
+        │   │       └── skills -> ../../../skills
+        │   └── gemini/
         │       └── home/
-        │           └── skills -> ../../../skills
+        │           ├── .gemini/
+        │           └── .agents/
+        │               └── skills -> ../../../../skills
         ├── skills/
         │   └── find-skills -> ~/.agents/skills/find-skills
         ├── packages/
@@ -273,7 +300,10 @@ Magent 不经过 Shell 拼接命令，参数会作为数组直接传递给子进
 - 可发现 `~/.agents/skills` 中包含 `SKILL.md` 的共享 Skills
 - `addskills` 使用软连接绑定 Skill，不复制文件
 - Pi 默认关闭自动 Skill 发现，只显式加载当前环境的 `<env>/skills`
-- Pi 与 Codex 的 Harness Skills 路径都连接到同一个环境 Skills 层
+- Pi、Codex、Claude Code 和 Gemini CLI 使用同一个环境 Skills 层
+- Claude Code 的配置、会话、插件以及 Linux 凭据由 `CLAUDE_CONFIG_DIR` 隔离
+- Gemini CLI 的 `.gemini` 与 `.agents` 用户状态由 `GEMINI_CLI_HOME` 隔离
+- Harness Adapter 自己负责目录准备、环境变量、启动参数和安装探测
 - Harness 的交互式终端可正常使用
 - 当前项目工作目录保持不变
 - Harness 的退出码会传递给调用方
@@ -292,7 +322,7 @@ Magent 不经过 Shell 拼接命令，参数会作为数组直接传递给子进
 magent skills add mini find-skills
 ```
 
-会创建或更新 `.skill-lock.json`，并建立软连接：
+会创建或更新环境级 `env-lock.json`，并建立软连接：
 
 ```text
 <mini>/skills/find-skills -> ~/.agents/skills/find-skills
@@ -303,13 +333,16 @@ Lock 文件记录来源、完整 Skill 目录的 SHA-256 完整性摘要和首�
 ```json
 {
   "schemaVersion": 1,
+  "environmentId": "802c6759-9d8a-4c35-8641-dd7e7c683bf0",
   "skills": {
     "find-skills": {
       "source": "/home/user/.agents/skills/find-skills",
       "integrity": "sha256-...",
       "linkedAt": "2026-08-19T02:45:00.123Z"
     }
-  }
+  },
+  "plugins": {},
+  "mcpServers": {}
 }
 ```
 
@@ -330,8 +363,9 @@ pi --no-skills --skill <mini>/skills ...
 ```
 
 因此不会再自动加载未绑定到当前环境的 `~/.agents/skills`。Codex 的
-`CODEX_HOME/skills` 会软连接到同一个 `<mini>/skills`；其他 Harness 需要在各自 Adapter
-确认官方 Skills 接口后再接入该层。
+`CODEX_HOME/skills`、Claude Code 的 `CLAUDE_CONFIG_DIR/skills` 和 Gemini CLI 虚拟 Home
+下的 `.agents/skills` 都会软连接到同一个 `<mini>/skills`。DSH 尚未确认稳定的通用 Skills
+接口，因此暂未接入。
 
 ### 尚未完全隔离
 
@@ -403,20 +437,39 @@ magent run mini pi --isolation strict
 
 该选项目前尚未实现。
 
+## Harness Adapter 生命周期
+
+`EnvironmentStore` 现在只管理通用环境结构，不再硬编码 Harness 内部目录。每个 Adapter 实现：
+
+```ts
+interface HarnessAdapter {
+  prepare(context: HarnessContext): Promise<void>;
+  environment(context: HarnessContext): NodeJS.ProcessEnv;
+  arguments?(context: HarnessContext, args: string[]): string[];
+  detect(env?: NodeJS.ProcessEnv): Promise<HarnessInfo>;
+}
+```
+
+`run` 会依次执行环境校验、`prepare()`、参数与环境变量构造，再启动真实进程。`doctor`
+通过 `detect()` 搜索 `PATH` 并执行 `--version`，5 秒超时后将 Harness 标记为 `broken`。
+
 ## 当前代码结构
 
 ```text
 src/
 ├── cli.ts                       # CLI 命令和错误出口
 └── core/
+    ├── confirmation.ts          # 交互式删除确认
     ├── environment-store.ts     # 环境创建、读取、列出、删除
     ├── harnesses.ts             # Harness Adapter 和进程启动
     ├── manifest.ts              # Manifest 类型、创建与校验
     ├── paths.ts                 # XDG/MAGENT_HOME/共享 Skills 路径解析
-    ├── skill-lock.ts            # Lock 读写与完整性摘要
+    ├── environment-lock.ts      # 环境资源 Lock、旧 Lock 迁移与完整性摘要
     └── skill-store.ts           # 共享 Skill 发现、绑定和移除
 
 test/
+├── confirmation.test.ts
+├── environment-lock.test.ts
 ├── environment-store.test.ts
 ├── harnesses.test.ts
 └── skill-store.test.ts
@@ -424,11 +477,12 @@ test/
 
 ## 已知限制
 
-- 没有 `magent doctor` 和 Harness 自动探测
-- 没有 Harness 版本约束与兼容性检查
+- `doctor` 已能探测可执行文件和版本，但没有版本约束与兼容性策略
 - 没有完整严格隔离模式（Pi Skills 已隔离，Context Files 等仍需手动关闭）
 - Skills 当前只支持从共享目录软连接，不支持下载、版本解析或自动更新
-- DSH 等其他 Harness 尚未接入共享 Skills 层
+- DSH 尚未接入共享 Skills 层
+- Claude/Gemini 仍会读取当前项目的 `.claude`、`.gemini`、`CLAUDE.md`、`GEMINI.md` 等项目资源
+- OpenCode 暂不支持
 - 没有环境克隆、导入和导出
 - 没有 Runtime ID、PID、日志与进程状态记录
 - 没有后台 Daemon、Surface 或 Service 管理
@@ -441,8 +495,8 @@ test/
 
 建议按以下顺序继续：
 
-1. 增加 `magent doctor` 和 Harness 探测
-2. 实现 `--isolation project-aware|strict`
+1. 实现 `--isolation project-aware|strict`
+2. 增加 Harness 版本约束与兼容性检查
 3. 增加 Skill Lock 校验/修复命令
 4. 为更多 Harness 接入共享 Skills 层
 5. 增加 `magent env clone/export/import`
@@ -457,12 +511,16 @@ test/
 - 读取和校验 Manifest
 - 环境列表排序
 - 非法名称与重复名称拒绝
-- 删除环境
+- 删除环境及交互式确认
+- 非交互删除必须显式传入 `--yes`
 - 共享 Skills 发现和描述读取
 - Skill 软连接、重复绑定和解除绑定
-- `.skill-lock.json` 原子写入与完整性摘要
+- `env-lock.json` 原子写入、旧 `.skill-lock.json` 迁移与完整性摘要
 - Pi 默认 `--no-skills --skill <env>/skills` 参数注入
-- Pi 与 Codex 共用同一个环境 Skills 层
+- Pi、Codex、Claude Code 和 Gemini CLI 的共享 Skills 准备
+- Claude/Gemini 环境变量与目录结构
+- Harness 可执行文件和版本探测
+- OpenCode 不在支持列表
 
 运行：
 

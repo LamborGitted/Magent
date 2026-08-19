@@ -14,9 +14,9 @@ import type { EnvironmentStore } from "./environment-store.js";
 import { getMagentPaths, type MagentPaths } from "./paths.js";
 import {
   calculateSkillIntegrity,
-  readSkillLock,
-  writeSkillLock,
-} from "./skill-lock.js";
+  readEnvironmentLock,
+  writeEnvironmentLock,
+} from "./environment-lock.js";
 
 export interface SharedSkill {
   id: string;
@@ -61,11 +61,12 @@ export class SkillStore {
   }
 
   public async listEnvironment(environmentName: string): Promise<EnvironmentSkill[]> {
+    const manifest = await this.environments.read(environmentName);
     const environmentRoot = this.environments.environmentPath(environmentName);
     const skillsRoot = await this.environments.ensureSkillsDirectory(environmentName);
     const links: DiscoveredEnvironmentLink[] = [];
     await discoverEnvironmentLinks(skillsRoot, skillsRoot, links);
-    const lock = await readSkillLock(environmentRoot);
+    const lock = await readEnvironmentLock(environmentRoot, manifest.id);
     const skills = new Map<string, EnvironmentSkill>();
 
     for (const link of links) {
@@ -93,10 +94,11 @@ export class SkillStore {
   }
 
   public async add(environmentName: string, skillIds: string[]): Promise<EnvironmentSkill[]> {
+    const manifest = await this.environments.read(environmentName);
     const environmentRoot = this.environments.environmentPath(environmentName);
     const environmentSkills = await this.environments.ensureSkillsDirectory(environmentName);
     const available = new Map((await this.listShared()).map((skill) => [skill.id, skill]));
-    const lock = await readSkillLock(environmentRoot);
+    const lock = await readEnvironmentLock(environmentRoot, manifest.id);
     const added: EnvironmentSkill[] = [];
 
     for (const skillId of skillIds) {
@@ -143,14 +145,15 @@ export class SkillStore {
       });
     }
 
-    await writeSkillLock(environmentRoot, lock);
+    await writeEnvironmentLock(environmentRoot, lock);
     return added;
   }
 
   public async remove(environmentName: string, skillIds: string[]): Promise<RemovedSkill[]> {
+    const manifest = await this.environments.read(environmentName);
     const environmentRoot = this.environments.environmentPath(environmentName);
     const environmentSkills = await this.environments.ensureSkillsDirectory(environmentName);
-    const lock = await readSkillLock(environmentRoot);
+    const lock = await readEnvironmentLock(environmentRoot, manifest.id);
     const removed: RemovedSkill[] = [];
 
     for (const skillId of skillIds) {
@@ -176,7 +179,7 @@ export class SkillStore {
       removed.push({ id: skillId, path: destination, linkRemoved });
     }
 
-    await writeSkillLock(environmentRoot, lock);
+    await writeEnvironmentLock(environmentRoot, lock);
     return removed;
   }
 }

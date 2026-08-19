@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { confirmEnvironmentRemoval } from "./core/confirmation.js";
 import { EnvironmentStore } from "./core/environment-store.js";
-import { runHarness } from "./core/harnesses.js";
+import { inspectHarnesses, runHarness } from "./core/harnesses.js";
 import { getMagentPaths } from "./core/paths.js";
 import { SkillStore } from "./core/skill-store.js";
 
@@ -76,7 +77,11 @@ environment
   .option("-y, --yes", "confirm destructive removal")
   .action(async (name: string, options: { yes?: boolean }) => {
     if (!options.yes) {
-      throw new Error(`Refusing to remove "${name}" without --yes.`);
+      await store.read(name);
+      if (!await confirmEnvironmentRemoval(name)) {
+        console.log("Removal cancelled.");
+        return;
+      }
     }
     await store.remove(name);
     console.log(`Removed environment "${name}".`);
@@ -120,10 +125,30 @@ skillsCommand
   .action(removeSkillsAction);
 
 program
+  .command("doctor [harness]")
+  .description("Detect supported Harness executables and versions")
+  .option("--json", "print JSON")
+  .action(async (harnessId: string | undefined, options: { json?: boolean }) => {
+    const results = await inspectHarnesses(harnessId);
+    if (options.json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      console.log("HARNESS\tSTATE\tVERSION\tPATH");
+      for (const result of results) {
+        console.log(
+          `${result.id}\t${result.state}\t${result.version ?? "-"}\t${result.path ?? "-"}`,
+        );
+        if (result.error) console.log(`  ${result.error}`);
+      }
+    }
+    if (results.some((result) => result.state !== "available")) process.exitCode = 1;
+  });
+
+program
   .command("run")
   .description("Run a harness inside an environment")
   .argument("<environment>", "environment name")
-  .argument("<harness>", "pi, dsh, or codex")
+  .argument("<harness>", "pi, dsh, codex, claude, or gemini")
   .argument("[args...]", "arguments passed to the harness")
   .allowUnknownOption()
   .action(async (environmentName: string, harness: string, args: string[]) => {

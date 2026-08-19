@@ -25,8 +25,14 @@ describe("EnvironmentStore", () => {
     expect(await store.exists("vision")).toBe(true);
     expect(await readFile(join(home, "envs", "vision", "env.toml"), "utf8"))
       .toContain('name = "vision"');
-    expect(JSON.parse(await readFile(join(home, "envs", "vision", ".skill-lock.json"), "utf8")))
-      .toEqual({ schemaVersion: 1, skills: {} });
+    expect(JSON.parse(await readFile(join(home, "envs", "vision", "env-lock.json"), "utf8")))
+      .toEqual({
+        schemaVersion: 1,
+        environmentId: manifest.id,
+        skills: {},
+        plugins: {},
+        mcpServers: {},
+      });
     expect(await store.read("vision")).toEqual(manifest);
   });
 

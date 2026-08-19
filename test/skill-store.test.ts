@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EnvironmentStore } from "../src/core/environment-store.js";
+import { getHarness } from "../src/core/harnesses.js";
 import { getMagentPaths } from "../src/core/paths.js";
 import { SkillStore } from "../src/core/skill-store.js";
 
@@ -53,7 +54,7 @@ describe("SkillStore", () => {
       }),
     ]);
     const lock = JSON.parse(await readFile(
-      join(environments.environmentPath("vision"), ".skill-lock.json"),
+      join(environments.environmentPath("vision"), "env-lock.json"),
       "utf8",
     ));
     expect(lock.skills["find-skills"]).toEqual(expect.objectContaining({
@@ -71,13 +72,28 @@ describe("SkillStore", () => {
     await expect(lstat(link!.path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(link!.target, "SKILL.md"), "utf8")).toContain("find-skills");
     expect(JSON.parse(await readFile(
-      join(environments.environmentPath("vision"), ".skill-lock.json"),
+      join(environments.environmentPath("vision"), "env-lock.json"),
       "utf8",
-    ))).toEqual({ schemaVersion: 1, skills: {} });
+    ))).toEqual({
+      schemaVersion: 1,
+      environmentId: expect.any(String),
+      skills: {},
+      plugins: {},
+      mcpServers: {},
+    });
   });
 
   it("makes Pi and Codex consume the same environment Skills layer", async () => {
     const environmentRoot = environments.environmentPath("vision");
+    const context = {
+      environmentName: "vision",
+      environmentRoot,
+      skillsRoot: environments.skillsPath("vision"),
+    };
+    await Promise.all([
+      getHarness("pi").prepare(context),
+      getHarness("codex").prepare(context),
+    ]);
     const piLink = join(environmentRoot, "harnesses", "pi", "agent", "skills");
     const codexLink = join(environmentRoot, "harnesses", "codex", "home", "skills");
 
