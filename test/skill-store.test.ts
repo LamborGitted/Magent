@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,7 +59,7 @@ describe("SkillStore", () => {
       "utf8",
     ));
     expect(lock.skills["find-skills"]).toEqual(expect.objectContaining({
-      source: link!.target,
+      source: await realpath(link!.target),
       integrity: expect.stringMatching(/^sha256-[a-f0-9]{64}$/),
     }));
     await expect(skills.add("vision", ["find-skills"])).resolves.toHaveLength(1);
