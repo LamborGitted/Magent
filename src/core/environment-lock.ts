@@ -10,6 +10,8 @@ const skillLockEntrySchema = z.object({
   source: z.string().min(1),
   integrity: z.string().regex(/^sha256-[a-f0-9]{64}$/),
   linkedAt: z.iso.datetime(),
+  kind: z.enum(["linked", "installed"]).optional(),
+  package: z.string().min(1).optional(),
 });
 
 const emptyResourceSetSchema = z.object({}).strict();

@@ -1,6 +1,6 @@
 {
   "name": "@lantxx/magent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Isolated environment manager for AI agent harnesses",
   "license": "MIT",
   "author": "LamborGitted",

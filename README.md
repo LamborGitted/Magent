@@ -45,8 +45,9 @@ magent env info <name>
 magent env remove <name> [-y|--yes]
 
 magent skills list [environment]
-magent skills add <environment> <skills...>
-magent skills rm <environment> <skills...>
+magent skills search [query...] [--owner <owner>] [--json]
+magent skills add <environment> <skills...> [--shared|--registry] [--global]
+magent skills rm <environment> <skills...> [-y|--yes]
 
 # 兼容的快捷命令
 magent listskills [environment]
@@ -135,14 +136,25 @@ magent env list
 magent env info mini
 ```
 
-列出 `~/.agents/skills` 中可用的共享 Skills，并软连接到环境：
+搜索 skills.sh、安装环境私有 Skill，或将本地共享 Skill 软连接到环境：
 
 ```bash
-magent skills list
+magent skills search react --owner vercel-labs
+magent skills add mini vercel-labs/agent-skills@vercel-react-best-practices
 magent skills add mini find-skills
 magent skills list mini
-magent skills rm mini find-skills
+magent skills rm mini vercel-react-best-practices -y
 ```
+
+`owner/repo@skill` 格式默认通过官方 Skills CLI 下载，并直接复制到 `<env>/skills`，
+不会写入 `~/.agents/skills`。使用 `--global` 时会先安装到共享目录，再软连接到环境：
+
+```bash
+magent skills add mini vercel-labs/skills@find-skills --global
+```
+
+无 `owner/repo@skill` 特征的输入沿用原行为，作为共享 Skill ID 处理。存在歧义时可用
+`--shared` 或 `--registry` 强制指定来源。远程安装要求系统中可以运行 `npx`。
 
 `~/.agents/skills` 是 Agent Skills 标准使用的复数目录。需要使用其他来源时，可以设置：
 
@@ -353,6 +365,7 @@ Lock 文件记录来源、完整 Skill 目录的 SHA-256 完整性摘要和首�
   "skills": {
     "find-skills": {
       "source": "/home/user/.agents/skills/find-skills",
+      "kind": "linked",
       "integrity": "sha256-...",
       "linkedAt": "2026-08-19T02:45:00.123Z"
     }
@@ -369,8 +382,10 @@ magent skills rm mini find-skills
 # rmskills 和 removeskills 是等价快捷命令
 ```
 
-该操作只删除环境软连接和 Lock 记录，不会删除 `~/.agents/skills` 中的共享源。
-`listskills <env>` 会显示 `linked`、`unlocked` 或 `missing` 状态，用于识别手动修改造成的不一致。
+对于共享 Skill，该操作只删除环境软连接和 Lock 记录，不会删除 `~/.agents/skills` 中的共享源。
+对于环境私有安装，命令会永久删除 `<env>/skills` 中对应目录，因此交互终端会要求确认，
+脚本中必须提供 `--yes`。`listskills <env>` 会显示 `linked`、`installed`、`unlocked` 或
+`missing` 状态，用于识别手动修改造成的不一致。
 
 Pi 每次启动时默认获得：
 
@@ -481,7 +496,8 @@ src/
     ├── manifest.ts              # Manifest 类型、创建与校验
     ├── paths.ts                 # XDG/MAGENT_HOME/共享 Skills 路径解析
     ├── environment-lock.ts      # 环境资源 Lock、旧 Lock 迁移与完整性摘要
-    └── skill-store.ts           # 共享 Skill 发现、绑定和移除
+    ├── skill-store.ts           # Skill 发现、安装、绑定和移除
+    └── skills-registry.ts       # skills.sh 搜索及官方 Skills CLI 下载适配
 
 test/
 ├── confirmation.test.ts
@@ -495,7 +511,7 @@ test/
 
 - `doctor` 已能探测可执行文件和版本，但没有版本约束与兼容性策略
 - 没有完整严格隔离模式（Pi Skills 已隔离，Context Files 等仍需手动关闭）
-- Skills 当前只支持从共享目录软连接，不支持下载、版本解析或自动更新
+- Skills 已支持 skills.sh 搜索与 `owner/repo@skill` 安装，但尚无版本解析和自动更新
 - DSH 尚未接入共享 Skills 层
 - Claude/Gemini 仍会读取当前项目的 `.claude`、`.gemini`、`CLAUDE.md`、`GEMINI.md` 等项目资源
 - OpenCode 暂不支持
@@ -531,6 +547,7 @@ test/
 - 非交互删除必须显式传入 `--yes`
 - 共享 Skills 发现和描述读取
 - Skill 软连接、重复绑定和解除绑定
+- skills.sh 搜索、环境私有安装和全局安装后绑定
 - `env-lock.json` 原子写入、旧 `.skill-lock.json` 迁移与完整性摘要
 - Pi 默认 `--no-skills --skill <env>/skills` 参数注入
 - Pi、Codex、Claude Code 和 Gemini CLI 的共享 Skills 准备

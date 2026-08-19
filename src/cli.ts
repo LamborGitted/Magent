@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { confirmEnvironmentRemoval } from "./core/confirmation.js";
+import { createInterface } from "node:readline/promises";
+import { confirmEnvironmentRemoval, confirmInstalledSkillRemoval } from "./core/confirmation.js";
 import { EnvironmentStore } from "./core/environment-store.js";
 import { inspectHarnesses, runHarness } from "./core/harnesses.js";
 import { getMagentPaths } from "./core/paths.js";
 import { SkillStore } from "./core/skill-store.js";
+import { SkillsShRegistry } from "./core/skills-registry.js";
 
 declare const __MAGENT_VERSION__: string;
 
 const program = new Command();
 const store = new EnvironmentStore();
-const skillStore = new SkillStore(store);
+const skillsRegistry = new SkillsShRegistry();
+const skillStore = new SkillStore(store, getMagentPaths(), skillsRegistry);
 
 program
   .name("magent")
@@ -97,13 +100,17 @@ program
 
 program
   .command("addskills <environment> <skills...>")
-  .description("Link shared Skills into an environment")
+  .description("Link shared Skills or install skills.sh packages into an environment")
+  .option("--shared", "force all inputs to be shared Skill IDs")
+  .option("--registry", "force all inputs to be skills.sh packages")
+  .option("-g, --global", "install registry packages globally, then link them")
   .action(addSkillsAction);
 
 program
   .command("rmskills <environment> <skills...>")
   .alias("removeskills")
-  .description("Unlink Skills from an environment without deleting their shared sources")
+  .description("Remove managed Skills from an environment")
+  .option("-y, --yes", "confirm deletion of installed Skill files")
   .action(removeSkillsAction);
 
 const skillsCommand = program.command("skills").description("Manage shared Skills bindings");
@@ -117,13 +124,25 @@ skillsCommand
 
 skillsCommand
   .command("add <environment> <skills...>")
-  .description("Link shared Skills into an environment")
+  .description("Link shared Skills or install skills.sh packages into an environment")
+  .option("--shared", "force all inputs to be shared Skill IDs")
+  .option("--registry", "force all inputs to be skills.sh packages")
+  .option("-g, --global", "install registry packages globally, then link them")
   .action(addSkillsAction);
+
+skillsCommand
+  .command("search [query...]")
+  .alias("find")
+  .description("Search skills.sh")
+  .option("--owner <owner>", "search only repositories from a GitHub owner")
+  .option("--json", "print JSON")
+  .action(searchSkillsAction);
 
 skillsCommand
   .command("remove <environment> <skills...>")
   .alias("rm")
-  .description("Unlink Skills without deleting their shared sources")
+  .description("Remove managed Skills from an environment")
+  .option("-y, --yes", "confirm deletion of installed Skill files")
   .action(removeSkillsAction);
 
 program
@@ -199,14 +218,72 @@ async function listSkillsAction(
   }
 }
 
-async function addSkillsAction(environmentName: string, skillIds: string[]): Promise<void> {
-  const links = await skillStore.add(environmentName, skillIds);
-  for (const link of links) console.log(`Linked ${link.id} -> ${link.target}`);
+interface AddSkillsCliOptions {
+  shared?: boolean;
+  registry?: boolean;
+  global?: boolean;
 }
 
-async function removeSkillsAction(environmentName: string, skillIds: string[]): Promise<void> {
+async function addSkillsAction(
+  environmentName: string,
+  skillIds: string[],
+  options: AddSkillsCliOptions,
+): Promise<void> {
+  if (options.shared && options.registry) throw new Error("--shared and --registry cannot be combined.");
+  if (options.global && options.shared) throw new Error("--global only applies to registry packages.");
+  const added = await skillStore.add(environmentName, skillIds, {
+    source: options.shared ? "shared" : options.registry ? "registry" : "auto",
+    ...(options.global ? { global: true } : {}),
+  });
+  for (const skill of added) {
+    console.log(`${skill.status === "installed" ? "Installed" : "Linked"} ${skill.id} -> ${skill.target}`);
+  }
+}
+
+async function searchSkillsAction(
+  queryParts: string[],
+  options: { owner?: string; json?: boolean },
+): Promise<void> {
+  let query = queryParts.join(" ").trim();
+  if (!query && process.stdin.isTTY && process.stdout.isTTY) {
+    const prompt = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      query = (await prompt.question("Search skills: ")).trim();
+    } finally {
+      prompt.close();
+    }
+  }
+  if (!query) throw new Error("A search query is required in non-interactive mode.");
+  const results = await skillsRegistry.search(query, options.owner);
+  if (options.json) {
+    console.log(JSON.stringify(results, null, 2));
+    return;
+  }
+  if (results.length === 0) {
+    console.log(`No Skills found for "${query}".`);
+    return;
+  }
+  console.log("PACKAGE\tINSTALLS\tURL");
+  for (const skill of results) console.log(`${skill.package}\t${skill.installs}\t${skill.url}`);
+  console.log("\nInstall with: magent skills add <environment> <package>");
+}
+
+async function removeSkillsAction(
+  environmentName: string,
+  skillIds: string[],
+  options: { yes?: boolean },
+): Promise<void> {
+  const installed = (await skillStore.listEnvironment(environmentName))
+    .filter((skill) => skillIds.includes(skill.id) && skill.status === "installed")
+    .map((skill) => skill.id);
+  if (installed.length > 0 && !options.yes) {
+    if (!await confirmInstalledSkillRemoval(environmentName, installed)) {
+      console.log("Removal cancelled.");
+      return;
+    }
+  }
   const removed = await skillStore.remove(environmentName, skillIds);
   for (const skill of removed) {
-    console.log(`${skill.linkRemoved ? "Unlinked" : "Unlocked"} ${skill.id}`);
+    console.log(`${skill.linkRemoved ? "Unlinked" : "Removed"} ${skill.id}`);
   }
 }

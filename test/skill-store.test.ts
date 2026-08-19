@@ -6,6 +6,7 @@ import { EnvironmentStore } from "../src/core/environment-store.js";
 import { getHarness } from "../src/core/harnesses.js";
 import { getMagentPaths } from "../src/core/paths.js";
 import { SkillStore } from "../src/core/skill-store.js";
+import type { SkillsRegistry } from "../src/core/skills-registry.js";
 
 let root: string;
 let environments: EnvironmentStore;
@@ -62,6 +63,69 @@ describe("SkillStore", () => {
       integrity: expect.stringMatching(/^sha256-[a-f0-9]{64}$/),
     }));
     await expect(skills.add("vision", ["find-skills"])).resolves.toHaveLength(1);
+  });
+
+  it("installs a skills.sh package directly into an environment", async () => {
+    const registry: SkillsRegistry = {
+      search: async () => [],
+      install: async (packageSpec, destinationRoot) => {
+        expect(packageSpec).toBe("owner/repo@remote-skill");
+        await mkdir(join(destinationRoot, "remote-skill"), { recursive: true });
+        await writeFile(join(destinationRoot, "remote-skill", "SKILL.md"), "# Remote\n");
+        return ["remote-skill"];
+      },
+    };
+    const remoteSkills = new SkillStore(environments, getMagentPaths({
+      HOME: root,
+      MAGENT_HOME: join(root, "magent"),
+      MAGENT_SHARED_SKILLS: join(root, ".agents", "skills"),
+    }), registry);
+
+    const [installed] = await remoteSkills.add("vision", ["owner/repo@remote-skill"]);
+    expect(installed).toEqual(expect.objectContaining({
+      id: "remote-skill",
+      status: "installed",
+      package: "owner/repo@remote-skill",
+    }));
+    expect((await lstat(installed!.path)).isDirectory()).toBe(true);
+    expect(await remoteSkills.listEnvironment("vision")).toEqual([
+      expect.objectContaining({ id: "remote-skill", status: "installed" }),
+    ]);
+
+    const [removed] = await remoteSkills.remove("vision", ["remote-skill"]);
+    expect(removed?.linkRemoved).toBe(false);
+    await expect(lstat(installed!.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("installs a registry Skill globally and links it into the environment", async () => {
+    const paths = getMagentPaths({
+      HOME: root,
+      MAGENT_HOME: join(root, "magent"),
+      MAGENT_SHARED_SKILLS: join(root, ".agents", "skills"),
+    });
+    const registry: SkillsRegistry = {
+      search: async () => [],
+      install: async (_packageSpec, destinationRoot) => {
+        await mkdir(join(destinationRoot, "global-skill"), { recursive: true });
+        await writeFile(join(destinationRoot, "global-skill", "SKILL.md"), "# Global\n");
+        return ["global-skill"];
+      },
+    };
+    const remoteSkills = new SkillStore(environments, paths, registry);
+
+    const [linked] = await remoteSkills.add(
+      "vision",
+      ["owner/repo@global-skill"],
+      { global: true },
+    );
+    expect(linked).toEqual(expect.objectContaining({
+      id: "global-skill",
+      status: "linked",
+      package: "owner/repo@global-skill",
+    }));
+    expect((await lstat(linked!.path)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(paths.sharedSkills, "global-skill", "SKILL.md"), "utf8"))
+      .toContain("Global");
   });
 
   it("unlinks a Skill without deleting its shared source", async () => {

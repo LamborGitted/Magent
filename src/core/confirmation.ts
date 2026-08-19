@@ -28,3 +28,24 @@ export async function confirmEnvironmentRemoval(
     prompt.close();
   }
 }
+
+export async function confirmInstalledSkillRemoval(
+  environmentName: string,
+  skillIds: string[],
+  input: PromptInput = process.stdin,
+  output: PromptOutput = process.stdout,
+): Promise<boolean> {
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error("Refusing to delete installed Skills non-interactively without --yes.");
+  }
+
+  output.write(`Delete installed Skills from environment "${environmentName}": ${skillIds.join(", ")}?\n`);
+  output.write("Environment-private Skill files will be permanently deleted.\n");
+  const prompt = createInterface({ input, output, terminal: false });
+  try {
+    const answer = await prompt.question("Continue? (y/N) ");
+    return /^(?:y|yes)$/i.test(answer.trim());
+  } finally {
+    prompt.close();
+  }
+}
